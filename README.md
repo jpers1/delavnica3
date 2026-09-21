@@ -212,7 +212,9 @@ redrawn.
 .venv/bin/python -m pytest tests/ -v
 ```
 
-Coverage (16 tests, all passing at time of writing):
+Coverage (16 core tests, all passing at time of writing; plus 5
+real-browser e2e tests that run when Playwright/Chromium/ffmpeg are
+available — see below):
 
 - `GET /health` returns 200 with the expected status
 - `GET /api/info` reports `device: cpu` and the expected runtime fields
@@ -230,6 +232,40 @@ Coverage (16 tests, all passing at time of writing):
 API tests inject a fake detector at the documented test seam
 (`create_app(detector_factory=...)`) so they stay fast and never need model
 weights. The real model path is verified separately — see below.
+
+### Real-browser end-to-end (optional)
+
+`tests/test_browser_e2e.py` drives the real page in headless Chromium
+(Playwright) against the real CPU backend, using a fake webcam: an ffmpeg
+`.y4m` video generated from the Ultralytics `zidane.jpg` sample
+(640×480). It verifies the complete software data path in a real browser
+engine:
+
+- page load; `/api/info` displayed with `device: cpu`;
+- Start → `getUserMedia()` → video playing at 640×480;
+- JPEG frames posted to `/api/detect`, answered by real `yolo26n.pt` CPU
+  inference; person detections returned;
+- request/server latency and the live detection rate in the stats line;
+- bounding boxes actually drawn on the overlay canvas (pixel-checked);
+- Stop with a deliberately delayed in-flight response: request aborted,
+  stale response dropped, status stays `Stopped.`, overlay cleared, no new
+  requests;
+- Start → Stop → Start: exactly one detection loop operating;
+- static-image fallback: upload `zidane.jpg`, real detections, overlay
+  rendered.
+
+It is skipped automatically when prerequisites are missing:
+
+```bash
+.venv/bin/pip install playwright
+.venv/bin/python -m playwright install chromium   # plus system deps
+sudo apt-get install -y ffmpeg
+.venv/bin/python -m pytest tests/test_browser_e2e.py -v
+```
+
+Playwright/ffmpeg are test-only tools and intentionally not part of
+`requirements.txt`. This test does **not** replace the physical-camera smoke
+test required by `AGENTS.md`.
 
 ## Performance baseline (measured, not claimed)
 
@@ -251,10 +287,12 @@ specific. First request after server start is slower (model warm-up).
 
 ## Known limitations
 
-- **Browser/webcam path not verified in this environment** (headless, no
-  browser, no camera). The HTTP contract the page consumes is fully
-  verified; the JavaScript rendering path needs a real browser check before
-  the live demo.
+- **Physical camera not verified in this environment.** The full browser
+  path *is* verified in headless Chromium with a fake webcam
+  (`tests/test_browser_e2e.py`): `getUserMedia` → frame capture →
+  `/api/detect` → real person detections → overlay boxes, plus Stop /
+  restart / upload behavior. A final smoke test with a real camera in a
+  real browser is still required before the demo.
 - WSL2 → Windows-browser `localhost` leg not tested here (no Windows host
   browser); WSL2's default localhost forwarding is expected to work.
 - LAN-over-plain-HTTP webcam access is **not** supported (browser secure
