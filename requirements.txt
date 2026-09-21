@@ -1,0 +1,14 @@
+# Core stack (CPU-only).
+# NOTE: torch/torchvision arrive as Ultralytics dependencies. Install them
+# FIRST from the CPU index so no CUDA wheels are pulled in:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+# Then: pip install -r requirements.txt
+ultralytics==8.4.157
+fastapi
+uvicorn[standard]
+python-multipart
+pillow
+
+# Test dependencies
+pytest
+httpx

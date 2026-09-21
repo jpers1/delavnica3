@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# YOLO / demo artifacts
+*.pt
+*_openvino_model/
+runs/
