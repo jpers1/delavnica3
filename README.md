@@ -91,8 +91,13 @@ You can also confirm the effective device at any time via
 4. Press **Start Detection**.
 5. Stand in view — `person` (and other COCO classes) get boxed with
    label + confidence.
-6. Watch the measured `request ms` / `server ms` / `~N img/s` line update.
-7. **Stop Detection** cancels the loop cleanly.
+6. Watch the measured `request ms` / `server ms` / `live N det/s` line update.
+   `request` and `server` are per-request measurements; `live` is the actual
+   detection rate — completed detections over elapsed wall-clock time since
+   Start (not an estimate derived from latency).
+7. **Stop Detection** cancels the loop cleanly: any in-flight request is
+   aborted, late responses are dropped (no stale boxes, status stays
+   `Stopped.`), and **Start Detection** can be pressed again immediately.
 
 If the camera is unavailable, use the **static image fallback** panel: pick a
 JPEG/PNG and press **Detect image**. It hits the same `/api/detect` endpoint.
@@ -196,6 +201,10 @@ repeat`; a new frame is never sent while a previous request is outstanding, so
 no unbounded queue can build up against the CPU-only backend. A client-side
 15 s request timeout and an error-pause (1 s) guard against hammering a broken
 backend. Start/Stop buttons are state-managed (Start is disabled while running).
+Stop aborts the in-flight request via `AbortController`, invalidates the loop
+generation, and stops the camera tracks; the loop re-checks liveness after
+every await, so a response that arrives after Stop is dropped instead of
+redrawn.
 
 ## Tests
 
@@ -203,7 +212,7 @@ backend. Start/Stop buttons are state-managed (Start is disabled while running).
 .venv/bin/python -m pytest tests/ -v
 ```
 
-Coverage (11 tests, all passing at time of writing):
+Coverage (16 tests, all passing at time of writing):
 
 - `GET /health` returns 200 with the expected status
 - `GET /api/info` reports `device: cpu` and the expected runtime fields
@@ -212,6 +221,11 @@ Coverage (11 tests, all passing at time of writing):
 - `POST /api/detect` on a JPEG/PNG returns the full contract: image size,
   `device: cpu`, numeric in-bounds boxes, confidences in `[0, 1]`, and an
   empty-detection success case
+- source-level guards for the browser client (`app/static/app.js`): Stop
+  aborts the in-flight request, stale responses are dropped before any draw,
+  an intentional abort is not shown as an error, and the live rate is
+  computed from wall-clock time (there is no JS runtime in this project's
+  toolchain; real-browser verification is a separate work order)
 
 API tests inject a fake detector at the documented test seam
 (`create_app(detector_factory=...)`) so they stay fast and never need model

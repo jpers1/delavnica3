@@ -6,6 +6,14 @@
  * draw -> wait configured delay -> next capture. A new frame is never sent
  * while a previous inference request is still outstanding, so no unbounded
  * queue can build up against the CPU-only backend.
+ *
+ * Stop semantics: Stop sets `running` to false, bumps `loopSeq` (which
+ * invalidates the current loop generation) and aborts the in-flight webcam
+ * request through its AbortController. The loop re-checks `alive()` after
+ * every await, so a stale response can never redraw boxes or overwrite the
+ * stopped status, and an intentional abort is never displayed as an error.
+ * A Start that is still coming up when Stop is pressed is likewise
+ * invalidated: it discards its camera stream instead of starting a loop.
  */
 
 const $ = (id) => document.getElementById(id);
@@ -30,6 +38,8 @@ const REQUEST_TIMEOUT_MS = 15000;
 
 let stream = null;
 let running = false; // detection loop active
+let loopSeq = 0; // generation counter; bumped on start/stop to invalidate loops
+let loopAbort = null; // AbortController for the in-flight webcam request
 let loopPromise = null;
 
 /* ---------- small helpers ---------- */
@@ -64,11 +74,20 @@ async function loadInfo() {
   }
 }
 
-async function postImageToDetect(blob, filename) {
+async function postImageToDetect(blob, filename, externalSignal = null) {
   const formData = new FormData();
   formData.append("file", blob, filename);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let onExternalAbort = null;
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort();
+    } else {
+      onExternalAbort = () => controller.abort();
+      externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+    }
+  }
   try {
     const res = await fetch("/api/detect", {
       method: "POST",
@@ -88,6 +107,9 @@ async function postImageToDetect(blob, filename) {
     return res.json();
   } finally {
     clearTimeout(timeout);
+    if (externalSignal && onExternalAbort) {
+      externalSignal.removeEventListener("abort", onExternalAbort);
+    }
   }
 }
 
@@ -132,30 +154,36 @@ function captureFrame() {
   );
 }
 
-async function detectionLoop() {
+async function detectionLoop(mySeq, signal) {
   let samples = 0;
-  let totalRequestMs = 0;
-  while (running) {
+  const loopStartedAt = performance.now();
+  const alive = () => running && loopSeq === mySeq;
+  while (alive()) {
     if (!video.videoWidth || !video.videoHeight) {
       await sleep(100); // camera not ready yet
       continue;
     }
     const frame = await captureFrame();
-    if (!frame || !running) break;
+    if (!frame || !alive()) break;
 
     const started = performance.now();
     let response;
     try {
-      response = await postImageToDetect(frame, "frame.jpg");
+      response = await postImageToDetect(frame, "frame.jpg", signal);
     } catch (err) {
-      if (!running) break;
-      showError("Detection request failed: " + err.message);
+      if (!alive()) break; // Stop was pressed: the abort is intentional, not an error
+      if (err && err.name === "AbortError") {
+        showError("Detection request timed out.");
+      } else {
+        showError("Detection request failed: " + err.message);
+      }
       await sleep(1000); // pause instead of hammering a broken backend
       continue;
     }
+    if (!alive()) break; // response arrived after Stop; drop it, draw nothing
+
     const requestMs = performance.now() - started;
     samples += 1;
-    totalRequestMs += requestMs;
     clearError();
 
     drawDetections(
@@ -165,14 +193,16 @@ async function detectionLoop() {
       response.image.height
     );
 
-    const avgMs = totalRequestMs / samples;
-    const perSecond = avgMs > 0 ? (1000 / avgMs).toFixed(1) : "?";
+    // Live rate = completed detections / wall-clock time since Start.
+    // Deliberately not derived from request or model latency.
+    const elapsedMs = performance.now() - loopStartedAt;
+    const liveFps = elapsedMs > 0 ? samples / (elapsedMs / 1000) : 0;
     const count = response.detections.length;
     stats.textContent =
       (count > 0 ? `${count} object(s) detected` : "No detections") +
       ` · request ${requestMs.toFixed(0)} ms` +
       ` · server ${Number(response.inference_ms).toFixed(0)} ms` +
-      ` · ~${perSecond} img/s`;
+      ` · live ${liveFps.toFixed(1)} det/s`;
 
     // Backpressure: wait for the configured delay before the next frame.
     const delay = frameDelayMs();
@@ -181,37 +211,65 @@ async function detectionLoop() {
 }
 
 async function startDetection() {
-  if (running) return;
+  if (running || startBtn.disabled) return; // already starting or running
+  startBtn.disabled = true; // block double-start while the camera comes up
   clearError();
+  const seqBefore = loopSeq; // Stop bumps loopSeq; that marks an interrupted start
+  let newStream;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({
+    newStream = await navigator.mediaDevices.getUserMedia({
       video: { width: { ideal: 640 }, height: { ideal: 480 } },
       audio: false,
     });
   } catch (err) {
+    startBtn.disabled = false;
     showError(
       "Camera access failed: " + err.message +
       " — try the static image fallback below."
     );
     return;
   }
+  if (loopSeq !== seqBefore) {
+    // Stop was pressed while the permission prompt was up: discard the camera.
+    for (const track of newStream.getTracks()) track.stop();
+    return; // Stop already restored the stopped UI state
+  }
 
+  stream = newStream;
   video.srcObject = stream;
+  stopBtn.disabled = false; // camera live: Stop can cancel startup or the loop
   await new Promise((resolve) => {
     if (video.readyState >= 2) resolve();
-    else video.onloadeddata = resolve;
+    else video.addEventListener("loadeddata", resolve, { once: true });
   });
+  if (loopSeq !== seqBefore || stream !== newStream) {
+    // Stop was pressed while the first frame was loading: discard the camera.
+    for (const track of newStream.getTracks()) track.stop();
+    if (stream === newStream) {
+      stream = null;
+      video.srcObject = null;
+      stopBtn.disabled = true;
+      startBtn.disabled = false;
+    }
+    return;
+  }
+
   emptyNote.hidden = true;
 
   running = true;
-  startBtn.disabled = true;
-  stopBtn.disabled = false;
+  loopSeq += 1;
+  loopAbort = new AbortController();
   stats.textContent = "Detecting\u2026";
-  loopPromise = detectionLoop();
+  loopPromise = detectionLoop(loopSeq, loopAbort.signal);
 }
 
 async function stopDetection() {
   running = false;
+  loopSeq += 1; // invalidate the current loop generation
+  if (loopAbort) {
+    loopAbort.abort(); // cancel the in-flight webcam request (if any)
+    loopAbort = null;
+  }
   if (stream) {
     for (const track of stream.getTracks()) track.stop();
     stream = null;
@@ -221,9 +279,10 @@ async function stopDetection() {
   startBtn.disabled = false;
   stopBtn.disabled = true;
   stats.textContent = "Stopped.";
-  if (loopPromise) {
-    await loopPromise; // loop notices running=false and exits on its own
-    loopPromise = null;
+  const exitingLoop = loopPromise;
+  loopPromise = null;
+  if (exitingLoop) {
+    await exitingLoop; // wait until the invalidated loop has fully exited
   }
 }
 
