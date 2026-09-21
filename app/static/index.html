@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YOLO CPU Web Demo</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header>
+    <h1>YOLO CPU Web Demo</h1>
+    <div id="info" class="info">Loading model info&hellip;</div>
+  </header>
+
+  <main>
+    <section class="panel">
+      <h2>Webcam detection</h2>
+      <div class="stage">
+        <video id="video" autoplay muted playsinline></video>
+        <canvas id="overlay"></canvas>
+        <div id="video-empty" class="empty">Camera preview appears here.</div>
+      </div>
+      <div class="controls">
+        <button id="start-btn">Start Detection</button>
+        <button id="stop-btn" disabled>Stop Detection</button>
+        <label class="delay-label">
+          Frame delay (ms)
+          <input id="delay" type="number" min="0" max="2000" step="50" value="150">
+        </label>
+      </div>
+      <div id="stats" class="stats">Ready.</div>
+      <div id="error" class="error" hidden></div>
+    </section>
+
+    <section class="panel">
+      <h2>Static image fallback</h2>
+      <p class="hint">
+        Upload a JPEG or PNG to run one detection. Useful when browser camera
+        permission is unavailable (e.g. a non-localhost page origin).
+      </p>
+      <div class="controls">
+        <input id="file" type="file" accept="image/jpeg,image/png">
+        <button id="upload-btn" disabled>Detect image</button>
+      </div>
+      <div class="stage">
+        <img id="upload-img" alt="Uploaded image" hidden>
+        <canvas id="upload-overlay" hidden></canvas>
+      </div>
+      <div id="upload-stats" class="stats"></div>
+    </section>
+  </main>
+
+  <footer>
+    CPU-only inference &mdash; no GPU required. OpenVINO optimization is future work.
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>

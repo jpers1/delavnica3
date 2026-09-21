@@ -1,0 +1,132 @@
+:root {
+  color-scheme: dark;
+  --bg: #101418;
+  --panel: #1a2129;
+  --text: #e6edf3;
+  --muted: #9aa7b2;
+  --accent: #00e676;
+  --error: #ff5252;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 12px;
+  padding: 16px 24px;
+  border-bottom: 1px solid #2a3440;
+}
+
+header h1 { margin: 0; font-size: 1.3rem; }
+
+.info { color: var(--muted); font-size: 0.9rem; }
+
+main {
+  display: grid;
+  gap: 20px;
+  padding: 20px 24px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.panel {
+  background: var(--panel);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.panel h2 { margin-top: 0; font-size: 1.05rem; }
+
+.hint { color: var(--muted); font-size: 0.85rem; }
+
+/* Stage: video/image in flow, canvas overlay stretched over the same box. */
+.stage {
+  position: relative;
+  display: inline-block;
+  min-width: 240px;
+  min-height: 135px;
+  background: #000;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.stage video,
+.stage img {
+  display: block;
+  max-width: 100%;
+}
+
+.stage canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+button {
+  background: var(--accent);
+  color: #04140b;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 16px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+input[type="number"] {
+  width: 70px;
+  background: #0d1116;
+  color: var(--text);
+  border: 1px solid #2a3440;
+  border-radius: 4px;
+  padding: 4px 6px;
+}
+
+input[type="file"] { color: var(--muted); font-size: 0.85rem; }
+
+.delay-label { color: var(--muted); font-size: 0.85rem; }
+
+.stats { color: var(--muted); font-size: 0.9rem; min-height: 1.2em; }
+
+.error {
+  color: var(--error);
+  font-size: 0.9rem;
+  margin-top: 8px;
+}
+
+footer {
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.8rem;
+  padding: 12px;
+}

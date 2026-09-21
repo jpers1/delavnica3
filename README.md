@@ -1,55 +1,24 @@
 # YOLO Web Detection Demo (CPU-only)
 
-A browser-accessible object-detection demo built on **Ultralytics YOLO** that runs entirely on
-**CPU** — no GPU, no CUDA, no training, no custom dataset. A plain HTML5 page captures webcam
-frames (or an uploaded image) and sends them over HTTP to a FastAPI service; the service runs
-inference with a pretrained **`yolo26n`** detection model and returns structured JSON
-detections, which the browser draws back over the live video as bounding boxes with class
-labels and confidence scores.
-
-> **Status: specification complete — implementation in progress.**
-> The project spec, architecture, API contract, and work plan are finalized in
-> [`AGENTS.md`](AGENTS.md). The service, web client, and tests are being implemented against
-> that spec now, targeting a live demo on **2026-09-22**.
-
----
-
-## Project status
-
-| Area | Status |
-|---|---|
-| Project specification & constraints ([`AGENTS.md`](AGENTS.md)) | ✅ Done |
-| API design & response contract | ✅ Done (defined in spec) |
-| Documentation (this README) | ✅ Done |
-| FastAPI service + Ultralytics YOLO detector | ⏳ In progress (next work item) |
-| HTML5 webcam client with bounding-box overlay | ⏳ Planned |
-| Automated API tests | ⏳ Planned |
-| Performance benchmarking (measured latency/FPS) | ⏳ Planned |
-| Optional OpenVINO CPU optimization | 🧪 Optional, after the baseline path works |
-
-Status labels follow the project convention: ✅ implemented · ⏳ planned/in progress ·
-🧪 optional/experimental · ❌ out of scope.
-
----
-
-## Why this project
-
-Modern object detection is usually shown on GPUs. This demo shows the other side: an ordinary
-Linux/WSL2 machine with **no GPU at all** can still serve useful real-time object detection to
-a browser. The value is in proving the full chain works end-to-end on commodity hardware:
+A browser-accessible object-detection demo built on **Ultralytics YOLO** that runs
+entirely on **CPU** — no GPU, no CUDA, no training, no custom dataset. A plain HTML5
+page captures webcam frames (or an uploaded image) and sends them over HTTP to a
+FastAPI service; the service runs inference with the pretrained **`yolo26n`**
+detection model and returns structured JSON detections, which the browser draws back
+over the live video as bounding boxes with class labels and confidence scores.
 
 ```
-Browser webcam
+Browser webcam / uploaded image
     |
-    | JPEG image over HTTP
+    | JPEG over HTTP (multipart)
     v
-FastAPI service
-    |
-    v
-Ultralytics YOLO26n
+FastAPI (uvicorn)
     |
     v
-CPU inference
+Ultralytics YOLO26n  (yolo26n.pt, pretrained)
+    |
+    v
+CPU inference (device forced to cpu)
     |
     v
 JSON detections
@@ -58,136 +27,239 @@ JSON detections
 Browser bounding-box overlay
 ```
 
-### Design principles
+Status labels follow the project convention: ✅ implemented · ⏳ planned/in progress ·
+🧪 optional/experimental · ❌ out of scope.
 
-1. **CPU-only, enforced.** No NVIDIA hardware, CUDA, cuDNN, TensorRT, or GPU PyTorch wheels.
-   The service reports its effective inference device so CPU execution is provable, not assumed.
-2. **No training, no custom data.** Official pretrained `yolo26n` weights (Ultralytics 8.4.157).
-3. **Boring reliability over features.** One model instance for the whole process, serialized
-   inference, bounded uploads, no unbounded request queues.
-4. **Measured, not claimed.** Latency and FPS figures are reported only when actually measured
-   on the demo machine.
+| Area | Status |
+|---|---|
+| Project specification & constraints ([`AGENTS.md`](AGENTS.md)) | ✅ Done |
+| FastAPI service + Ultralytics YOLO detector (CPU-forced) | ✅ Implemented |
+| HTML5 webcam client with bounding-box overlay + timing | ✅ Implemented |
+| Static image upload fallback | ✅ Implemented |
+| Automated API tests (health / info / detect contract) | ✅ Implemented, passing |
+| Performance baseline (measured, see below) | ✅ Measured |
+| Optional OpenVINO CPU optimization | ⏳ Planned (next work order, not implemented) |
+| Object tracking, training, auth, database, Docker | ❌ Out of scope |
 
 ---
 
-## Planned quickstart
+## Quickstart (Linux / WSL2)
 
-> The commands below are the target setup and will be verified end-to-end (and marked as such
-> in this README) once the implementation work item lands.
-
-### Native Linux
+Tested on **Ubuntu 26.04 under WSL2** with Python 3.14 and
+`ultralytics==8.4.157`.
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
+
+# CPU-only PyTorch + torchvision (must come from the CPU index; the default
+# PyPI wheels bundle CUDA libraries. On a GPU-less machine they "work" but
+# bloat the install; the CPU builds keep this project honestly CPU-only).
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
 pip install -r requirements.txt
+```
+
+First start downloads the official `yolo26n.pt` weights (~5 MB) from
+Ultralytics' asset releases; afterwards they are cached locally.
+
+## Start the server
+
+```bash
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-### WSL2
-
-Same commands as above. The primary demo path is
-`Windows browser → http://localhost:8000 → WSL2 FastAPI`.
-
-### Run the demo
-
-1. Start the server as above.
-2. Open `http://localhost:8000` in the browser.
-3. Allow the camera permission prompt.
-4. Press **Start Detection**.
-5. Stand in view and watch `person` (and other classes) get boxed and labeled live.
-6. Watch the measured request/inference latency update in the UI.
-
-### Configuration
-
-All settings are environment-variable friendly:
+Startup log (CPU operation is stated explicitly):
 
 ```text
-YOLO_MODEL=yolo26n.pt
-YOLO_BACKEND=auto        # auto = exported OpenVINO model if present, else PyTorch CPU
-YOLO_IMGSZ=640
-YOLO_CONF=0.25
-YOLO_MAX_DETECTIONS=100
-HOST=0.0.0.0
-PORT=8000
+Inference device: CPU (forced; GPU never used)
+Model: yolo26n.pt
+Backend: PyTorch CPU
+Ultralytics version: 8.4.157
+Inference image size: 640
+Confidence threshold: 0.25
 ```
 
-On startup the service logs the Ultralytics version, model, backend, device (`CPU`),
-inference image size, and confidence threshold.
+You can also confirm the effective device at any time via
+[`GET /api/info`](#api).
+
+## Run the demo
+
+1. Start the server as above.
+2. Open **http://localhost:8000** in a browser on the same machine.
+3. Allow the camera permission prompt.
+4. Press **Start Detection**.
+5. Stand in view — `person` (and other COCO classes) get boxed with
+   label + confidence.
+6. Watch the measured `request ms` / `server ms` / `~N img/s` line update.
+7. **Stop Detection** cancels the loop cleanly.
+
+If the camera is unavailable, use the **static image fallback** panel: pick a
+JPEG/PNG and press **Detect image**. It hits the same `/api/detect` endpoint.
+
+### WSL2
+
+Run the Linux commands above inside WSL2. The primary demo path is
+**Windows browser → `http://localhost:8000` → WSL2 FastAPI**; WSL2 forwards
+Windows' `localhost` to the distro by default. The service was verified running
+inside WSL2 and reachable on `localhost:8000` from the distro side; the
+Windows-side browser leg has not been tested in this environment (no Windows
+host browser available here). If localhost forwarding is disabled on your host,
+the minimal fallback is to use the Windows-visible WSL IP (from `ip addr`
+inside WSL2) as the page origin — but then see the camera caveat below.
+
+### Browser camera caveat (read before the demo)
+
+Browsers only grant camera access in a **secure context**.
+`http://localhost` is treated as secure by modern browsers, so the
+same-machine flow works. From **another device on the LAN over plain HTTP**,
+webcam access is generally **blocked** — that path is *not* supported/tested.
+Supported options: (1) browser and service on the same machine via
+`localhost`; (2) HTTPS termination for remote clients; (3) the static
+image-upload fallback built into the page.
 
 ---
 
-## API design
+## API
 
 | Endpoint | Purpose |
 |---|---|
 | `GET /` | Serves the HTML5 webcam demo page |
-| `GET /health` | Service readiness (`{"status": "ok"}`) |
-| `GET /api/info` | Model, backend, device, inference size |
-| `POST /api/detect` | Accepts one image (`multipart/form-data`, JPEG/PNG), returns JSON detections |
+| `GET /health` | Service readiness: `{"status": "ok"}` |
+| `GET /api/info` | Model, backend, device, inference size, conf, ultralytics version |
+| `POST /api/detect` | One image (`multipart/form-data`, field `file`, JPEG or PNG, ≤ 10 MB) → JSON detections |
 
-Example `/api/detect` response:
+`/api/info` response (CPU is reported and enforced):
 
 ```json
 {
-  "image": { "width": 640, "height": 480 },
-  "model": "yolo26n",
+  "model": "yolo26n.pt",
+  "backend": "pytorch",
   "device": "cpu",
-  "inference_ms": 84.3,
+  "imgsz": 640,
+  "conf": 0.25,
+  "max_detections": 100,
+  "ultralytics_version": "8.4.157"
+}
+```
+
+`/api/detect` response contract:
+
+```json
+{
+  "image": { "width": 1280, "height": 720 },
+  "model": "yolo26n.pt",
+  "device": "cpu",
+  "inference_ms": 105.2,
   "detections": [
     {
       "class_id": 0,
       "class_name": "person",
-      "confidence": 0.91,
-      "box": { "x1": 120.4, "y1": 54.8, "x2": 410.2, "y2": 470.1 }
+      "confidence": 0.9005,
+      "box": { "x1": 742.4, "y1": 41.0, "x2": 1151.3, "y2": 709.0 }
     }
   ]
 }
 ```
 
-Boxes use the uploaded image's coordinate system, with validated
-`0 <= x1 < x2 <= width` and `0 <= y1 < y2 <= height`; confidences are in `[0, 1]`.
+Boxes use the uploaded image's coordinate system with
+`0 <= x1 < x2 <= width` and `0 <= y1 < y2 <= height`; confidences are in
+`[0, 1]`. An empty `detections` array is a normal success, not an error.
+Errors are clean JSON (`400` invalid/unsupported image, `413` too large,
+`500` inference failure) — no Python tracebacks are exposed.
+
+## Configuration
+
+Environment variables (simple defaults, no `.env` file needed):
+
+```text
+YOLO_MODEL=yolo26n.pt
+YOLO_IMGSZ=640
+YOLO_CONF=0.25
+YOLO_MAX_DETECTIONS=100
+MAX_UPLOAD_BYTES=10485760
+HOST=0.0.0.0        # used in the startup log only; bind with uvicorn
+PORT=8000
+```
+
+The inference device is **always CPU** — it is hard-wired in the detector, not
+selected at runtime, so a GPU appearing on the host is never used.
 
 ## Browser client
 
-Plain HTML5 + CSS + vanilla JavaScript — no frontend framework. The page uses
-`navigator.mediaDevices.getUserMedia()` for the camera, an offscreen `<canvas>` for JPEG frame
-capture, and `fetch()` to post frames to `/api/detect`. Frames are sent with **backpressure**:
-capture → send → await response → draw → schedule next frame — so an unbounded request queue
-can never build up, and no frame is sent while the previous inference is outstanding.
+Plain HTML5 + CSS + vanilla JavaScript (no build step). `navigator.mediaDevices
+getUserMedia()` for the camera, an offscreen `<canvas>` for JPEG frame capture,
+`fetch()` for the HTTP round-trip, and an overlay `<canvas>` for boxes.
 
-**Webcam security note:** browsers only grant camera access in a secure context.
-`http://localhost` works for local development; for another device on the LAN, plain HTTP may
-be blocked by the browser. The supported demo paths are therefore: (1) browser and service on
-the same machine via `localhost`, (2) HTTPS termination for remote clients, or (3) the static
-image-upload fallback built into the page.
+**Backpressure:** the loop is `capture → send → await response → draw → wait →
+repeat`; a new frame is never sent while a previous request is outstanding, so
+no unbounded queue can build up against the CPU-only backend. A client-side
+15 s request timeout and an error-pause (1 s) guard against hammering a broken
+backend. Start/Stop buttons are state-managed (Start is disabled while running).
 
-## Tests & evidence
+## Tests
 
-Automated tests (no webcam required, local fixture image):
+```bash
+.venv/bin/python -m pytest tests/ -v
+```
+
+Coverage (11 tests, all passing at time of writing):
 
 - `GET /health` returns 200 with the expected status
-- `GET /api/info` reports `device: cpu`
-- `POST /api/detect` cleanly rejects invalid image data
-- `POST /api/detect` on a known fixture returns valid JSON with in-range boxes and confidences
+- `GET /api/info` reports `device: cpu` and the expected runtime fields
+- `POST /api/detect` rejects: invalid bytes, empty upload, GIF (unsupported
+  format), oversized upload (10 MB cap), missing file field
+- `POST /api/detect` on a JPEG/PNG returns the full contract: image size,
+  `device: cpu`, numeric in-bounds boxes, confidences in `[0, 1]`, and an
+  empty-detection success case
 
-A benchmark script reports model/backend, input resolution, logical-core count, warm-up
-iterations, mean/median inference latency, and approximate FPS — after warm-up, never from
-marketing numbers.
+API tests inject a fake detector at the documented test seam
+(`create_app(detector_factory=...)`) so they stay fast and never need model
+weights. The real model path is verified separately — see below.
+
+## Performance baseline (measured, not claimed)
+
+Measured with `scripts/benchmark.py` (3 warm-up + 10 timed inferences,
+`imgsz=640`, `conf=0.25`, 8 logical cores, `bus.jpg` 810×1080 sample image,
+Ubuntu 26.04 / WSL2, PyTorch CPU 2.14.0+cpu):
+
+```text
+model: yolo26n.pt · backend: pytorch · device: cpu
+mean latency:   80.4 ms
+median latency: 71.2 ms
+approx model-only FPS: 14.1
+```
+
+End-to-end HTTP (localhost, same image, warmed server): ~70–180 ms per
+request. This comfortably supports the 2–5 requests/s demo target on this
+machine; **re-measure on the actual demo machine** — numbers are hardware-
+specific. First request after server start is slower (model warm-up).
+
+## Known limitations
+
+- **Browser/webcam path not verified in this environment** (headless, no
+  browser, no camera). The HTTP contract the page consumes is fully
+  verified; the JavaScript rendering path needs a real browser check before
+  the live demo.
+- WSL2 → Windows-browser `localhost` leg not tested here (no Windows host
+  browser); WSL2's default localhost forwarding is expected to work.
+- LAN-over-plain-HTTP webcam access is **not** supported (browser secure
+  context); use localhost, HTTPS, or the image-upload fallback.
+- Single process, one model instance, serialized inference — intended for a
+  demo, not a high-throughput service. No multi-worker deployment.
+- `yolo26s` / larger variants are not evaluated (out of scope for this PR).
 
 ## Roadmap
 
 | Phase | Goal | Status |
 |---|---|---|
-| A — Make it correct | Service starts, model loads, one known image detects, CPU confirmed | ⏳ In progress |
-| B — Make it interactive | Webcam client, overlay, timing display, upload fallback | ⏳ Planned |
-| C — Optimize | OpenVINO export/benchmark; keep the faster reliable CPU backend as default | 🧪 Optional |
+| A — Make it correct | Service starts, model loads, known image detects, CPU confirmed | ✅ Done |
+| B — Make it interactive | Webcam client, overlay, timing display, upload fallback | ✅ Done |
+| C — Optimize | OpenVINO export/benchmark via Ultralytics; keep the faster reliable CPU backend | ⏳ Next work order |
 
-Explicit non-goals for the first release: model training/fine-tuning, object tracking, video
-recording, authentication, databases, Docker requirement, and any other framework beyond the
-stack above.
-
----
+Explicit non-goals for this release: model training/fine-tuning, object
+tracking, video recording, authentication, databases, Docker requirement,
+WebSocket/WebRTC, and any GPU path.
 
 ## References
 
